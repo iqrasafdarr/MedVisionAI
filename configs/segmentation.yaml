@@ -1,0 +1,39 @@
+# Config for the MONAI U-Net segmentation module.
+# Every hyperparameter a training/eval run needs should live here — no
+# hardcoded values in src/segmentation/*.py.
+
+seed: 42
+
+data:
+  root_dir: "data/msd_task01"        # populated by scripts/download_data.py
+  modality: "flair"                   # single modality, 2D-slice pipeline
+  split_file: "results/segmentation/split.json"  # patient-level split, generated once
+  train_frac: 0.7
+  val_frac: 0.15
+  test_frac: 0.15
+  patch_size: [128, 128]
+
+model:
+  name: "unet"
+  in_channels: 1
+  out_channels: 2                     # background / tumor (binary, start simple)
+  channels: [16, 32, 64, 128, 256]
+  strides: [2, 2, 2, 2]
+  num_res_units: 2
+
+train:
+  batch_size: 8
+  epochs: 50
+  learning_rate: 1e-4
+  optimizer: "adam"
+  loss: "dice_ce"
+  device: "cuda"                      # falls back to cpu automatically if unavailable
+  early_stopping_patience: 10
+  num_workers: 2                      # DataLoader worker processes
+  val_frequency: 1                    # validate every N epochs
+
+output:
+  checkpoint_dir: "results/segmentation/checkpoints"
+  log_file: "results/segmentation/train_log.csv"
+  summary_file: "results/segmentation/summary.json"
+  visualization_dir: "results/segmentation/visualizations"

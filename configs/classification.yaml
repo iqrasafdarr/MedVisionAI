@@ -1,0 +1,33 @@
+# Config for the ViT fine-tuning module.
+
+seed: 42
+
+data:
+  root_dir: "PATH/TO/YOUR/EXISTING/brain-mri-4class-dataset"  # set this locally
+  classes: ["glioma", "meningioma", "pituitary", "no_tumor"]
+  train_frac: 0.8
+  val_frac: 0.1
+  test_frac: 0.1
+  image_size: 224
+
+model:
+  name: "google/vit-base-patch16-224"
+  num_labels: 4
+
+train:
+  batch_size: 16
+  epochs: 15
+  learning_rate: 2e-5
+  optimizer: "adamw"
+  weight_decay: 0.01
+  device: "cuda"
+  class_weighting: "auto"             # handles any class imbalance in the dataset
+
+output:
+  checkpoint_dir: "results/classification/checkpoints"
+  log_file: "results/classification/train_log.csv"
+  summary_file: "results/classification/summary.json"
+  confusion_matrix_file: "results/classification/confusion_matrix.png"
+
+# Prior-work numbers, documented (not reproduced by this config's run):
+# MobileNetV2 — 91.75% accuracy, 91.69% F1 — see docs/experiments.md

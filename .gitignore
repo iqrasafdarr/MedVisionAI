@@ -1,0 +1,26 @@
+# Data — never commit raw or processed datasets
+data/*
+!data/README.md
+
+# Model checkpoints / large artifacts
+results/**/*.pt
+results/**/*.pth
+results/**/checkpoints/
+!results/**/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# Environment / IDE
+.env
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

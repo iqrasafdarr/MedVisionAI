@@ -1,0 +1,21 @@
+# Config for the BLIP-base structured description module.
+
+seed: 42
+
+model:
+  name: "Salesforce/blip-image-captioning-base"
+  mode: "zero_shot"                   # "zero_shot" or "fine_tuned" — start zero_shot
+  device: "cuda"
+
+report_template:
+  sections:
+    - "image_description"            # raw BLIP caption / structured visual features
+    - "ai_classification_context"    # classifier prediction + confidence, injected
+    - "safety_disclaimer"            # fixed text, never model-generated
+
+disclaimer_text: >
+  Research prototype only. This output is generated for demonstration purposes
+  and is not intended for clinical diagnosis or medical decision-making.
+
+output:
+  demo_dir: "results/multimodal"

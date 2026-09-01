@@ -1,0 +1,23 @@
+# Core DL stack — left version-flexible so Colab's preinstalled torch/CUDA
+# pairing is not overwritten. Pin exact versions only if reproducing a specific
+# past run (record the resolved versions in results/<module>/summary.json).
+torch>=2.2
+torchvision>=0.17
+monai>=1.3
+transformers>=4.40
+datasets>=2.18
+
+# Data / metrics / utils
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+matplotlib>=3.8
+opencv-python-headless>=4.9
+nibabel>=5.2
+Pillow>=10.2
+
+# Demo
+gradio>=4.20
+
+# Config / reproducibility
+PyYAML>=6.0
