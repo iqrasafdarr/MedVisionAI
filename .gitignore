@@ -24,3 +24,18 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Medical imaging datasets - never upload to GitHub
+data/download/
+data/msd_task01/
+*.tar
+*.nii
+*.nii.gz
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
