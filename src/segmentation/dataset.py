@@ -233,7 +233,10 @@ def _resize_2d(array_2d: np.ndarray, target_size: tuple[int, int], is_label: boo
 
 
 def _build_slice_index(
-    records: list[VolumeRecord], patient_ids: set[str], drop_empty_slices: bool
+    records: list[VolumeRecord],
+    patient_ids: set[str],
+    drop_empty_slices: bool,
+    max_slices_per_volume: int | None = None,
 ) -> list[tuple[Path, Path, int]]:
     """Scan the relevant volumes once and build a flat (image_path,
     label_path, slice_index) index, optionally dropping slices with no
@@ -250,11 +253,33 @@ def _build_slice_index(
         image_flair = _extract_flair_channel(image_4ch)
 
         num_slices = image_flair.shape[2]
+
+        candidate_slices = []
         for slice_idx in range(num_slices):
-            if drop_empty_slices:
-                image_slice = image_flair[:, :, slice_idx]
-                if image_slice.max() <= 0:
-                    continue  # no brain tissue in this slice at all
+            image_slice = image_flair[:, :, slice_idx]
+
+            if drop_empty_slices and image_slice.max() <= 0:
+                continue
+
+            candidate_slices.append(slice_idx)
+
+        # CPU-friendly sampling: choose evenly distributed slices.
+        # This keeps sampling deterministic and preserves coverage across
+        # the entire MRI volume.
+        if (
+            max_slices_per_volume is not None
+            and max_slices_per_volume > 0
+            and len(candidate_slices) > max_slices_per_volume
+        ):
+            positions = np.linspace(
+                0,
+                len(candidate_slices) - 1,
+                max_slices_per_volume,
+                dtype=int,
+            )
+            candidate_slices = [candidate_slices[i] for i in positions]
+
+        for slice_idx in candidate_slices:
             index.append((record.image_path, record.label_path, slice_idx))
     return index
 
@@ -273,11 +298,15 @@ class BrainTumorSliceDataset(Dataset):
         patient_ids: list[str],
         patch_size: tuple[int, int],
         drop_empty_slices: bool = True,
+        max_slices_per_volume: int | None = None,
     ) -> None:
         self.patch_size = tuple(patch_size)
         patient_id_set = set(patient_ids)
         self.index = _build_slice_index(
-            records, patient_id_set, drop_empty_slices=drop_empty_slices
+            records,
+            patient_id_set,
+            drop_empty_slices=drop_empty_slices,
+            max_slices_per_volume=max_slices_per_volume,
         )
         if not self.index:
             raise DatasetIntegrityError(
@@ -342,11 +371,33 @@ def build_dataloaders(config: dict):
     )
 
     patch_size = tuple(data_cfg["patch_size"])
-    train_ds = BrainTumorSliceDataset(records, split["train"], patch_size, drop_empty_slices=True)
-    val_ds = BrainTumorSliceDataset(records, split["val"], patch_size, drop_empty_slices=True)
-    # Test keeps empty slices too — evaluation should reflect real-world
-    # slice distribution, not just tissue-containing slices.
-    test_ds = BrainTumorSliceDataset(records, split["test"], patch_size, drop_empty_slices=False)
+    max_slices_per_volume = data_cfg.get("max_slices_per_volume")
+
+    train_ds = BrainTumorSliceDataset(
+        records,
+        split["train"],
+        patch_size,
+        drop_empty_slices=True,
+        max_slices_per_volume=max_slices_per_volume,
+    )
+
+    val_ds = BrainTumorSliceDataset(
+        records,
+        split["val"],
+        patch_size,
+        drop_empty_slices=True,
+        max_slices_per_volume=max_slices_per_volume,
+    )
+
+    # Test uses the same deterministic sampling budget for CPU-friendly
+    # evaluation. Patient-level separation remains unchanged.
+    test_ds = BrainTumorSliceDataset(
+        records,
+        split["test"],
+        patch_size,
+        drop_empty_slices=False,
+        max_slices_per_volume=max_slices_per_volume,
+    )
 
     train_cfg = config["train"]
     num_workers = train_cfg.get("num_workers", 2)

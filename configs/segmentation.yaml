@@ -12,6 +12,7 @@ data:
   val_frac: 0.15
   test_frac: 0.15
   patch_size: [128, 128]
+  max_slices_per_volume: 10
 
 model:
   name: "unet"
@@ -23,7 +24,7 @@ model:
 
 train:
   batch_size: 2
-  epochs: 20
+  epochs: 10
   learning_rate: 1e-4
   optimizer: "adam"
   loss: "dice_ce"
