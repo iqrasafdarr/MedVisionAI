@@ -22,14 +22,14 @@ model:
   num_res_units: 2
 
 train:
-  batch_size: 8
-  epochs: 50
+  batch_size: 2
+  epochs: 20
   learning_rate: 1e-4
   optimizer: "adam"
   loss: "dice_ce"
   device: "cuda"                      # falls back to cpu automatically if unavailable
   early_stopping_patience: 10
-  num_workers: 2                      # DataLoader worker processes
+  num_workers: 0                      # DataLoader worker processes
   val_frequency: 1                    # validate every N epochs
 
 output:

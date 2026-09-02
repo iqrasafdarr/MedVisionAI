@@ -246,7 +246,7 @@ def _build_slice_index(
     for record in records:
         if record.patient_id not in patient_ids:
             continue
-        image_4ch = nib.load(str(record.image_path)).get_fdata()
+        image_4ch = nib.load(str(record.image_path)).get_fdata(dtype=np.float32)
         image_flair = _extract_flair_channel(image_4ch)
 
         num_slices = image_flair.shape[2]
@@ -297,9 +297,9 @@ class BrainTumorSliceDataset(Dataset):
     def _load_volume(self, image_path: Path, label_path: Path) -> tuple[np.ndarray, np.ndarray]:
         if self._cache_path == image_path:
             return self._cache_image, self._cache_label
-        image_4ch = nib.load(str(image_path)).get_fdata()
+        image_4ch = nib.load(str(image_path)).get_fdata(dtype=np.float32)
         image_flair = _extract_flair_channel(image_4ch)
-        label = nib.load(str(label_path)).get_fdata()
+        label = nib.load(str(label_path)).get_fdata(dtype=np.float32)
         self._cache_path = image_path
         self._cache_image = image_flair
         self._cache_label = label
