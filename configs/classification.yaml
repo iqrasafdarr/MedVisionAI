@@ -1,33 +1,46 @@
-# Config for the ViT fine-tuning module.
+# MedVisionAI — Vision Transformer classification configuration
 
 seed: 42
 
 data:
-  root_dir: "PATH/TO/YOUR/EXISTING/brain-mri-4class-dataset"  # set this locally
-  classes: ["glioma", "meningioma", "pituitary", "no_tumor"]
-  train_frac: 0.8
+  root_dir: "D:/signedu dataset"
+  classes:
+    - "glioma"
+    - "meningioma"
+    - "pituitary"
+    - "no_tumor"
+
+  # Train folder is split into train/validation.
+  # The provided Val folder is kept completely untouched as the test set.
+  train_frac: 0.9
   val_frac: 0.1
-  test_frac: 0.1
+  test_frac: 0.0
+
   image_size: 224
 
 model:
   name: "google/vit-base-patch16-224"
   num_labels: 4
 
+  # ViT-Base has 12 encoder layers.
+  # Freeze the first 10 and fine-tune the final 2 + classifier.
+  # This keeps CPU training practical.
+  freeze_encoder_layers: 10
+
 train:
-  batch_size: 16
-  epochs: 15
+  batch_size: 2
+  epochs: 3
   learning_rate: 2e-5
   optimizer: "adamw"
   weight_decay: 0.01
-  device: "cuda"
-  class_weighting: "auto"             # handles any class imbalance in the dataset
+
+  device: "cpu"
+  num_workers: 0
+
+  class_weighting: "auto"
 
 output:
   checkpoint_dir: "results/classification/checkpoints"
   log_file: "results/classification/train_log.csv"
   summary_file: "results/classification/summary.json"
   confusion_matrix_file: "results/classification/confusion_matrix.png"
-
-# Prior-work numbers, documented (not reproduced by this config's run):
-# MobileNetV2 — 91.75% accuracy, 91.69% F1 — see docs/experiments.md
