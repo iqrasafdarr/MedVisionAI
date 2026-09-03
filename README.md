@@ -9,7 +9,7 @@
 [![Gradio](https://img.shields.io/badge/Gradio-Demo-F97316)](https://gradio.app/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> A research-oriented multimodal framework combining brain MRI tumor segmentation, four-class tumor classification, generic visual description, confidence analysis, and controlled report generation.
+> A research-oriented multimodal framework combining brain MRI tumor segmentation, four-class classification, generic visual description, confidence analysis, and controlled report generation.
 
 **Research prototype — not a clinical diagnostic system.**
 
@@ -24,7 +24,7 @@ Medical imaging AI systems can achieve strong predictive performance while still
 The current system combines:
 
 * **MONAI U-Net** for tumor segmentation
-* **Vision Transformer (ViT)** for four-class tumor classification
+* **Vision Transformer (ViT)** for four-class brain MRI classification
 * **BLIP-base** for generic image description
 * **Confidence analysis** for classifier predictions
 * **Controlled report generation** for structured communication
@@ -35,6 +35,34 @@ The central design principle is:
 > **Prediction, visual description, and communication should remain explicitly separated.**
 
 This prevents the vision-language component from being treated as an autonomous medical reporting or diagnostic system.
+
+---
+
+# Visual Results
+
+## Classification Performance
+
+<p align="center">
+  <img src="results/classification/confusion_matrix.png" width="700">
+</p>
+
+**Figure:** Confusion matrix for the four-class ViT classification experiment on the held-out test set.
+
+---
+
+## Segmentation Results
+
+<p align="center">
+  <img src="results/segmentation/visualizations/test_case_07_dice_0.971.png" width="850">
+</p>
+
+**Figure:** Example qualitative segmentation result from the held-out test set with a Dice score of **0.971**.
+
+Additional segmentation visualizations are available in:
+
+```text
+results/segmentation/visualizations/
+```
 
 ---
 
@@ -76,7 +104,7 @@ The framework provides a foundation for research into:
         ┌─────────────────┐             ┌──────────────────┐
         │   MONAI U-Net   │             │ Vision Transformer│
         │                 │             │       (ViT)       │
-        │ Tumor           │             │ Tumor             │
+        │ Tumor           │             │ Brain MRI         │
         │ Segmentation    │             │ Classification    │
         └────────┬────────┘             └─────────┬─────────┘
                  │                                │
@@ -111,29 +139,29 @@ The framework provides a foundation for research into:
                                       └──────────────────┘
 ```
 
-The segmentation and classification branches are evaluated independently. The current Gradio demonstration uses the classification and BLIP components for image-level inference and controlled reporting.
+The segmentation and classification branches are evaluated independently. The current Gradio demonstration primarily showcases the classification, BLIP, and controlled-reporting pathway.
 
 ---
 
 # Key Contributions
 
-## 1. Modular multimodal architecture
+## 1. Modular Multimodal Architecture
 
 MedVisionAI combines segmentation, classification, and vision-language components while maintaining explicit task boundaries.
 
-## 2. Patient-level segmentation splitting
+## 2. Patient-Level Segmentation Splitting
 
 The segmentation experiment uses patient-level train/validation/test splitting to reduce the risk of patient leakage between partitions.
 
-## 3. Transfer learning with Vision Transformer
+## 3. Transfer Learning with Vision Transformer
 
-A pretrained Vision Transformer is adapted for four brain MRI image categories.
+A pretrained Vision Transformer is adapted for four brain MRI categories.
 
-## 4. Confidence-aware classification evaluation
+## 4. Confidence-Aware Classification Evaluation
 
 The classification pipeline reports standard performance metrics together with prediction confidence and high-confidence errors.
 
-## 5. Controlled report generation
+## 5. Controlled Report Generation
 
 The final report explicitly separates:
 
@@ -142,11 +170,11 @@ The final report explicitly separates:
 * classifier confidence
 * fixed safety information
 
-## 6. Explicit VLM limitation
+## 6. Explicit VLM Limitation
 
 BLIP is used only as a generic image-description model. Its output is not converted into fabricated clinical findings.
 
-## 7. Reproducible research structure
+## 7. Reproducible Research Structure
 
 Configuration files, source modules, training scripts, evaluation scripts, and experiment artifacts are organized separately to support reproducibility and future experimentation.
 
@@ -310,7 +338,7 @@ Val/
 └── No Tumor/
 ```
 
-The provided training directory contains 4,737 images.
+The provided training directory contains **4,737 images**.
 
 It was divided into:
 
@@ -365,7 +393,7 @@ freeze_encoder_layers: 10
 
 Class weighting was enabled during training to reduce the effect of class imbalance.
 
-The experiments were conducted on a CPU-only environment.
+The experiments were conducted in a CPU-only environment.
 
 ---
 
@@ -759,11 +787,11 @@ pip install -r requirements.txt
 The reported experiments were developed and tested using a CPU-only environment.
 
 ```text
-Python:       3.11.9
-PyTorch:      2.13.0+cpu
-Transformers: 5.16.1
-Gradio:       6.26.0
-Device:       CPU
+Python:        3.11.9
+PyTorch:       2.13.0+cpu
+Transformers:  5.16.1
+Gradio:        6.26.0
+Device:        CPU
 ```
 
 The implementation automatically falls back to CPU when CUDA is unavailable.
@@ -783,18 +811,13 @@ python scripts/train_segmentation.py --config configs/segmentation.yaml
 ## Segmentation Evaluation
 
 ```bash
-python scripts/evaluate_segmentation.py \
-    --config configs/segmentation.yaml \
-    --checkpoint results/segmentation/checkpoints/best_model.pt
+python scripts/evaluate_segmentation.py --config configs/segmentation.yaml --checkpoint results/segmentation/checkpoints/best_model.pt
 ```
 
 ## Segmentation Visualization
 
 ```bash
-python scripts/visualize_segmentation.py \
-    --config configs/segmentation.yaml \
-    --checkpoint results/segmentation/checkpoints/best_model.pt \
-    --n-examples 8
+python scripts/visualize_segmentation.py --config configs/segmentation.yaml --checkpoint results/segmentation/checkpoints/best_model.pt --n-examples 8
 ```
 
 ## Classification Training
@@ -857,7 +880,7 @@ These artifacts provide access to experiment logs, metrics, predictions, checkpo
 
 # Limitations
 
-## 1. 2D segmentation
+## 1. 2D Segmentation
 
 The current segmentation implementation processes individual axial slices rather than complete 3D MRI volumes.
 
@@ -865,7 +888,7 @@ Therefore, the segmentation metrics should not be interpreted as 3D volumetric p
 
 ---
 
-## 2. Limited segmentation training
+## 2. Limited Segmentation Training
 
 The segmentation experiment was conducted in a CPU-only environment and the training run was interrupted during a later epoch because of a memory-related NIfTI decompression failure.
 
@@ -875,7 +898,7 @@ This should be considered when interpreting segmentation performance.
 
 ---
 
-## 3. Generic BLIP model
+## 3. Generic BLIP Model
 
 BLIP is a general-purpose image-captioning model and is not specialized for radiological interpretation.
 
@@ -883,7 +906,7 @@ Its output on MRI images can therefore be repetitive, semantically weak, or inap
 
 ---
 
-## 4. Confidence is not calibrated uncertainty
+## 4. Confidence Is Not Calibrated Uncertainty
 
 Softmax probability does not automatically represent calibrated uncertainty.
 
@@ -899,7 +922,7 @@ Future work should investigate:
 
 ---
 
-## 5. Dataset generalization
+## 5. Dataset Generalization
 
 Strong performance on a held-out dataset does not guarantee generalization to:
 
@@ -913,7 +936,7 @@ Independent external validation is required to evaluate generalization.
 
 ---
 
-## 6. No clinical deployment claim
+## 6. No Clinical Deployment Claim
 
 This repository does not establish:
 
