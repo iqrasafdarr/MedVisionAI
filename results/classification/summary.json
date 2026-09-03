@@ -1,0 +1,114 @@
+{
+  "model": "google/vit-base-patch16-224",
+  "device": "cpu",
+  "num_classes": 4,
+  "classes": [
+    "glioma",
+    "meningioma",
+    "pituitary",
+    "no_tumor"
+  ],
+  "dataset": {
+    "train_samples": 4263,
+    "validation_samples": 474,
+    "test_samples": 512
+  },
+  "training": {
+    "epochs": 3,
+    "batch_size": 2,
+    "learning_rate": 2e-05,
+    "weight_decay": 0.01,
+    "best_epoch": 3,
+    "best_validation_macro_f1": 0.9644880890735996,
+    "freeze_encoder_layers": 10
+  },
+  "test_metrics": {
+    "accuracy": 0.96875,
+    "macro_precision": 0.9720617420107625,
+    "macro_recall": 0.968203781512605,
+    "macro_f1": 0.9698121835361,
+    "confusion_matrix": [
+      [
+        130,
+        6,
+        0,
+        0
+      ],
+      [
+        1,
+        135,
+        4,
+        0
+      ],
+      [
+        0,
+        1,
+        135,
+        0
+      ],
+      [
+        0,
+        4,
+        0,
+        96
+      ]
+    ],
+    "classification_report": {
+      "0": {
+        "precision": 0.9923664122137404,
+        "recall": 0.9558823529411765,
+        "f1-score": 0.9737827715355806,
+        "support": 136.0
+      },
+      "1": {
+        "precision": 0.9246575342465754,
+        "recall": 0.9642857142857143,
+        "f1-score": 0.9440559440559441,
+        "support": 140.0
+      },
+      "2": {
+        "precision": 0.9712230215827338,
+        "recall": 0.9926470588235294,
+        "f1-score": 0.9818181818181818,
+        "support": 136.0
+      },
+      "3": {
+        "precision": 1.0,
+        "recall": 0.96,
+        "f1-score": 0.9795918367346939,
+        "support": 100.0
+      },
+      "accuracy": 0.96875,
+      "macro avg": {
+        "precision": 0.9720617420107625,
+        "recall": 0.968203781512605,
+        "f1-score": 0.9698121835361,
+        "support": 512.0
+      },
+      "weighted avg": {
+        "precision": 0.9697269878727364,
+        "recall": 0.96875,
+        "f1-score": 0.9689233310496352,
+        "support": 512.0
+      }
+    },
+    "mean_confidence": 0.9924149513244629,
+    "loss": 0.132770302091604
+  },
+  "confidence_analysis": {
+    "low_confidence": {
+      "count": 3,
+      "percentage": 0.5859375
+    },
+    "correct_high_confidence": {
+      "count": 494,
+      "percentage": 96.484375
+    },
+    "incorrect_high_confidence": {
+      "count": 15,
+      "percentage": 2.9296875
+    },
+    "threshold": 0.6,
+    "mean_confidence": 0.9924149513244629
+  }
+}

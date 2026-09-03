@@ -1,4 +1,4 @@
-"""Vision Transformer fine-tuning pipeline for brain MRI classification."""
+"""ViT fine-tuning pipeline for MedVisionAI classification."""
 
 import csv
 import json
@@ -19,17 +19,6 @@ from src.classification.metrics import (
 )
 
 
-def _make_loader(dataset, batch_size, shuffle, num_workers):
-    """Create a DataLoader with CPU-friendly settings."""
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=False,
-    )
-
-
 def _freeze_layers(model, num_layers):
     """Freeze ViT embeddings and the first N encoder layers."""
 
@@ -40,8 +29,8 @@ def _freeze_layers(model, num_layers):
     for parameter in model.vit.embeddings.parameters():
         parameter.requires_grad = False
 
-    # Current Transformers ViT implementation exposes
-    # encoder blocks through `model.vit.layers`.
+    # Current Transformers version exposes ViT encoder blocks
+    # through `model.vit.layers`.
     encoder_layers = model.vit.layers
 
     num_to_freeze = min(
@@ -53,24 +42,29 @@ def _freeze_layers(model, num_layers):
         for parameter in layer.parameters():
             parameter.requires_grad = False
 
-    print(
-        f"Frozen first {num_to_freeze} ViT encoder layers "
-        f"for CPU-efficient fine-tuning."
+
+def _make_loader(dataset, batch_size, shuffle, num_workers):
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=False,
     )
 
 
 def _run_epoch(model, loader, criterion, optimizer, device, training):
-    """Run one training or validation epoch."""
-
     if training:
         model.train()
     else:
         model.eval()
 
     total_loss = 0.0
-    all_predictions = []
-    all_labels = []
-    all_probabilities = []
+    total_samples = 0
+
+    all_true = []
+    all_pred = []
+    all_proba = []
 
     for batch in loader:
         pixel_values = batch["pixel_values"].to(device)
@@ -80,108 +74,87 @@ def _run_epoch(model, loader, criterion, optimizer, device, training):
             optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(training):
-            outputs = model(
-                pixel_values=pixel_values,
-                labels=labels,
-            )
-
-            loss = outputs.loss
+            outputs = model(pixel_values=pixel_values)
             logits = outputs.logits
+
+            loss = criterion(logits, labels)
 
             if training:
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
 
         probabilities = torch.softmax(logits, dim=1)
         predictions = torch.argmax(probabilities, dim=1)
 
-        total_loss += loss.item() * labels.size(0)
+        batch_size = labels.size(0)
 
-        all_predictions.extend(
-            predictions.detach().cpu().numpy()
-        )
-        all_labels.extend(
-            labels.detach().cpu().numpy()
-        )
-        all_probabilities.extend(
-            probabilities.detach().cpu().numpy()
-        )
+        total_loss += loss.item() * batch_size
+        total_samples += batch_size
 
-    mean_loss = total_loss / len(loader.dataset)
+        all_true.extend(labels.detach().cpu().numpy())
+        all_pred.extend(predictions.detach().cpu().numpy())
+        all_proba.append(probabilities.detach().cpu().numpy())
 
-    return (
-        mean_loss,
-        np.asarray(all_labels),
-        np.asarray(all_predictions),
-        np.asarray(all_probabilities),
+    y_true = np.asarray(all_true)
+    y_pred = np.asarray(all_pred)
+    y_proba = np.concatenate(all_proba, axis=0)
+
+    metrics = compute_classification_metrics(
+        y_true,
+        y_pred,
+        y_proba,
     )
 
+    metrics["loss"] = total_loss / max(total_samples, 1)
 
-def _save_confusion_matrix(
-    confusion_matrix,
-    class_names,
-    output_path,
-):
-    """Save confusion matrix visualization."""
+    return metrics, y_true, y_pred, y_proba
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(
-        figsize=(8, 7)
+def _save_confusion_matrix(matrix, class_names, output_path):
+    matrix = np.asarray(matrix)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    image = ax.imshow(matrix)
+
+    ax.set(
+        xticks=np.arange(len(class_names)),
+        yticks=np.arange(len(class_names)),
+        xticklabels=class_names,
+        yticklabels=class_names,
+        xlabel="Predicted label",
+        ylabel="True label",
+        title="ViT Brain MRI Classification Confusion Matrix",
     )
 
-    ax.imshow(confusion_matrix)
-
-    ax.set_title("ViT Brain MRI Classification Confusion Matrix")
-    ax.set_xlabel("Predicted label")
-    ax.set_ylabel("True label")
-
-    ax.set_xticks(
-        range(len(class_names))
-    )
-    ax.set_yticks(
-        range(len(class_names))
-    )
-
-    ax.set_xticklabels(
-        class_names,
-        rotation=45,
-        ha="right",
-    )
-    ax.set_yticklabels(class_names)
-
-    for i in range(len(class_names)):
-        for j in range(len(class_names)):
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
             ax.text(
                 j,
                 i,
-                str(confusion_matrix[i, j]),
+                matrix[i, j],
                 ha="center",
                 va="center",
             )
 
+    fig.colorbar(image, ax=ax)
     fig.tight_layout()
-    fig.savefig(
-        output_path,
-        dpi=200,
-        bbox_inches="tight",
-    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
     plt.close(fig)
 
 
-def train(config):
-    """Train and evaluate the ViT classification model."""
+def train(config: dict) -> dict:
+    data_cfg = config["data"]
+    model_cfg = config["model"]
+    train_cfg = config["train"]
+    output_cfg = config["output"]
 
-    seed = config.get("seed", 42)
+    output_dir = Path(output_cfg["checkpoint_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
-    device_name = config["train"].get(
-        "device",
-        "cpu",
-    )
+    device_name = train_cfg.get("device", "cpu")
 
     if device_name == "cuda" and not torch.cuda.is_available():
         print("CUDA requested but unavailable. Falling back to CPU.")
@@ -189,116 +162,71 @@ def train(config):
 
     device = torch.device(device_name)
 
-    print(f"Using device: {device}")
+    print(f"\nUsing device: {device}")
 
-    # ------------------------------------------------------------------
-    # Dataset
-    # ------------------------------------------------------------------
-
-    train_dataset, val_dataset, test_dataset, class_names = build_datasets(
+    train_dataset, val_dataset, test_dataset, processor = build_datasets(
         config
     )
 
-    print("\nClassification dataset:")
-    print(f"  Train: {len(train_dataset)}")
-    print(f"  Validation: {len(val_dataset)}")
-    print(f"  Test: {len(test_dataset)}")
-    print(f"  Classes: {class_names}")
-
-    num_workers = config["train"].get(
-        "num_workers",
-        0,
-    )
-
-    batch_size = config["train"].get(
-        "batch_size",
-        2,
-    )
+    num_workers = train_cfg.get("num_workers", 0)
+    batch_size = train_cfg.get("batch_size", 2)
 
     train_loader = _make_loader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size,
         shuffle=True,
         num_workers=num_workers,
     )
 
     val_loader = _make_loader(
         val_dataset,
-        batch_size=batch_size,
+        batch_size,
         shuffle=False,
         num_workers=num_workers,
     )
 
     test_loader = _make_loader(
         test_dataset,
-        batch_size=batch_size,
+        batch_size,
         shuffle=False,
         num_workers=num_workers,
     )
 
-    # ------------------------------------------------------------------
-    # Model
-    # ------------------------------------------------------------------
-
-    model_name = config["model"]["name"]
-    num_labels = config["model"]["num_labels"]
-
     print("\nLoading pretrained ViT...")
 
     model = ViTForImageClassification.from_pretrained(
-        model_name,
-        num_labels=num_labels,
+        model_cfg["name"],
+        num_labels=model_cfg["num_labels"],
         ignore_mismatched_sizes=True,
     )
 
-    model.config.id2label = {
-        i: class_name
-        for i, class_name in enumerate(class_names)
-    }
-
-    model.config.label2id = {
-        class_name: i
-        for i, class_name in enumerate(class_names)
-    }
-
     model.to(device)
 
-    freeze_layers = config["model"].get(
-        "freeze_encoder_layers",
-        0,
-    )
+    freeze_layers = model_cfg.get("freeze_encoder_layers", 0)
 
-    _freeze_layers(
-        model,
-        freeze_layers,
-    )
-
-    # ------------------------------------------------------------------
-    # Class weighting
-    # ------------------------------------------------------------------
-
-    class_weighting = config["train"].get(
-        "class_weighting",
-        "none",
-    )
-
-    criterion = None
-
-    if class_weighting == "auto":
-        train_labels = [
-            label
-            for _, label in train_dataset.samples
-        ]
-
-        class_counts = np.bincount(
-            train_labels,
-            minlength=num_labels,
+    if freeze_layers > 0:
+        _freeze_layers(model, freeze_layers)
+        print(
+            f"Frozen first {freeze_layers} ViT encoder layers "
+            "for CPU-efficient fine-tuning."
         )
 
-        total_samples = len(train_labels)
+    class_names = data_cfg["classes"]
 
-        weights = total_samples / (
-            num_labels * np.maximum(class_counts, 1)
+    train_labels = np.asarray(
+        [label for _, label in train_dataset.samples]
+    )
+
+    class_weighting = train_cfg.get("class_weighting", "none")
+
+    if class_weighting == "auto":
+        counts = np.bincount(
+            train_labels,
+            minlength=len(class_names),
+        ).astype(np.float32)
+
+        weights = counts.sum() / (
+            len(class_names) * np.maximum(counts, 1)
         )
 
         class_weights = torch.tensor(
@@ -307,194 +235,92 @@ def train(config):
             device=device,
         )
 
-        criterion = nn.CrossEntropyLoss(
-            weight=class_weights
-        )
-
         print("\nClass weights:")
+        for name, weight in zip(class_names, weights):
+            print(f"  {name}: {weight:.4f}")
 
-        for class_name, weight in zip(
-            class_names,
-            weights,
-        ):
-            print(
-                f"  {class_name}: {weight:.4f}"
-            )
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     else:
         criterion = nn.CrossEntropyLoss()
 
-    # ------------------------------------------------------------------
-    # Optimizer
-    # ------------------------------------------------------------------
-
     learning_rate = float(
-        config["train"].get(
-            "learning_rate",
-            2e-5,
-        )
+        train_cfg.get("learning_rate", 2e-5)
+    )
+    weight_decay = float(
+        train_cfg.get("weight_decay", 0.01)
     )
 
-    weight_decay = float(
-        config["train"].get(
-            "weight_decay",
-            0.01,
-        )
-    )
+    trainable_parameters = [
+        parameter
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    ]
 
     optimizer = AdamW(
-        filter(
-            lambda parameter: parameter.requires_grad,
-            model.parameters(),
-        ),
+        trainable_parameters,
         lr=learning_rate,
         weight_decay=weight_decay,
     )
 
-    epochs = int(
-        config["train"].get(
-            "epochs",
-            3,
-        )
-    )
+    epochs = int(train_cfg.get("epochs", 3))
 
-    # ------------------------------------------------------------------
-    # Output directories
-    # ------------------------------------------------------------------
+    log_file = Path(output_cfg["log_file"])
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_dir = Path(
-        config["output"]["checkpoint_dir"]
-    )
+    best_val_f1 = -1.0
+    best_epoch = -1
 
-    checkpoint_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    history = []
 
-    log_file = Path(
-        config["output"]["log_file"]
-    )
-
-    log_file.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    summary_file = Path(
-        config["output"]["summary_file"]
-    )
-
-    summary_file.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    confusion_matrix_file = Path(
-        config["output"]["confusion_matrix_file"]
-    )
-
-    confusion_matrix_file.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    best_checkpoint = (
-        checkpoint_dir / "best_model.pt"
-    )
-
-    # ------------------------------------------------------------------
-    # Training
-    # ------------------------------------------------------------------
-
-    print(
-        f"\nStarting training for {epochs} epochs..."
-    )
-
-    best_val_f1 = -float("inf")
-    training_history = []
+    print(f"\nStarting training for {epochs} epochs...\n")
 
     for epoch in range(1, epochs + 1):
-
-        print(
-            f"\nEpoch {epoch}/{epochs}"
+        train_metrics, _, _, _ = _run_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            training=True,
         )
 
-        train_loss, train_labels, train_predictions, train_probs = (
-            _run_epoch(
-                model=model,
-                loader=train_loader,
-                criterion=criterion,
-                optimizer=optimizer,
-                device=device,
-                training=True,
-            )
+        val_metrics, _, _, _ = _run_epoch(
+            model,
+            val_loader,
+            criterion,
+            optimizer=None,
+            device=device,
+            training=False,
         )
 
-        val_loss, val_labels, val_predictions, val_probs = (
-            _run_epoch(
-                model=model,
-                loader=val_loader,
-                criterion=criterion,
-                optimizer=optimizer,
-                device=device,
-                training=False,
-            )
-        )
-
-        train_metrics = compute_classification_metrics(
-            train_labels,
-            train_predictions,
-            train_probs,
-            class_names,
-        )
-
-        val_metrics = compute_classification_metrics(
-            val_labels,
-            val_predictions,
-            val_probs,
-            class_names,
-        )
-
-        print(
-            f"  Train loss: {train_loss:.4f}"
-        )
-        print(
-            f"  Train accuracy: "
-            f"{train_metrics['accuracy']:.4f}"
-        )
-        print(
-            f"  Train macro-F1: "
-            f"{train_metrics['macro_f1']:.4f}"
-        )
-
-        print(
-            f"  Val loss: {val_loss:.4f}"
-        )
-        print(
-            f"  Val accuracy: "
-            f"{val_metrics['accuracy']:.4f}"
-        )
-        print(
-            f"  Val macro-F1: "
-            f"{val_metrics['macro_f1']:.4f}"
-        )
-
-        epoch_record = {
+        row = {
             "epoch": epoch,
-            "train_loss": train_loss,
+            "train_loss": train_metrics["loss"],
             "train_accuracy": train_metrics["accuracy"],
             "train_macro_f1": train_metrics["macro_f1"],
-            "val_loss": val_loss,
+            "val_loss": val_metrics["loss"],
             "val_accuracy": val_metrics["accuracy"],
             "val_macro_f1": val_metrics["macro_f1"],
         }
 
-        training_history.append(
-            epoch_record
+        history.append(row)
+
+        print(
+            f"Epoch {epoch}/{epochs} | "
+            f"train_loss={row['train_loss']:.4f} | "
+            f"train_acc={row['train_accuracy']:.4f} | "
+            f"train_f1={row['train_macro_f1']:.4f} | "
+            f"val_loss={row['val_loss']:.4f} | "
+            f"val_acc={row['val_accuracy']:.4f} | "
+            f"val_f1={row['val_macro_f1']:.4f}"
         )
 
         if val_metrics["macro_f1"] > best_val_f1:
             best_val_f1 = val_metrics["macro_f1"]
+            best_epoch = epoch
+
+            checkpoint_path = output_dir / "best_model.pt"
 
             torch.save(
                 {
@@ -503,214 +329,131 @@ def train(config):
                     "optimizer_state_dict": optimizer.state_dict(),
                     "val_macro_f1": best_val_f1,
                     "class_names": class_names,
-                    "model_name": model_name,
+                    "model_name": model_cfg["name"],
                 },
-                best_checkpoint,
+                checkpoint_path,
             )
 
             print(
-                f"  Saved best checkpoint: "
-                f"{best_checkpoint}"
+                f"  Saved best checkpoint: {checkpoint_path}"
             )
 
-    # ------------------------------------------------------------------
-    # Save training log
-    # ------------------------------------------------------------------
-
-    with open(
-        log_file,
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as handle:
-
+    with open(log_file, "w", newline="") as f:
         writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "epoch",
-                "train_loss",
-                "train_accuracy",
-                "train_macro_f1",
-                "val_loss",
-                "val_accuracy",
-                "val_macro_f1",
-            ],
+            f,
+            fieldnames=history[0].keys(),
         )
-
         writer.writeheader()
-        writer.writerows(
-            training_history
-        )
+        writer.writerows(history)
 
-    # ------------------------------------------------------------------
-    # Load best checkpoint
-    # ------------------------------------------------------------------
+    print("\nLoading best checkpoint for final test evaluation...")
 
-    print(
-        "\nLoading best checkpoint for test evaluation..."
-    )
+    checkpoint_path = output_dir / "best_model.pt"
 
     checkpoint = torch.load(
-        best_checkpoint,
+        checkpoint_path,
         map_location=device,
     )
 
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
-    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.to(device)
 
-    # ------------------------------------------------------------------
-    # Test evaluation
-    # ------------------------------------------------------------------
-
-    test_loss, test_labels, test_predictions, test_probs = (
-        _run_epoch(
-            model=model,
-            loader=test_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=device,
-            training=False,
-        )
-    )
-
-    test_metrics = compute_classification_metrics(
-        test_labels,
-        test_predictions,
-        test_probs,
-        class_names,
+    test_metrics, y_true, y_pred, y_proba = _run_epoch(
+        model,
+        test_loader,
+        criterion,
+        optimizer=None,
+        device=device,
+        training=False,
     )
 
     confidence = get_confidence_buckets(
-        test_labels,
-        test_predictions,
-        test_probs,
+        y_true,
+        y_pred,
+        y_proba,
+        low_conf_threshold=0.6,
     )
 
-    print("\nTest results:")
-    print(
-        f"  Loss: {test_loss:.4f}"
+    confusion_matrix_path = Path(
+        output_cfg["confusion_matrix_file"]
     )
-    print(
-        f"  Accuracy: "
-        f"{test_metrics['accuracy']:.4f}"
-    )
-    print(
-        f"  Macro precision: "
-        f"{test_metrics['macro_precision']:.4f}"
-    )
-    print(
-        f"  Macro recall: "
-        f"{test_metrics['macro_recall']:.4f}"
-    )
-    print(
-        f"  Macro F1: "
-        f"{test_metrics['macro_f1']:.4f}"
-    )
-    print(
-        f"  Mean confidence: "
-        f"{test_metrics['mean_confidence']:.4f}"
-    )
-
-    # ------------------------------------------------------------------
-    # Confusion matrix
-    # ------------------------------------------------------------------
 
     _save_confusion_matrix(
         test_metrics["confusion_matrix"],
         class_names,
-        confusion_matrix_file,
+        confusion_matrix_path,
     )
 
-    # ------------------------------------------------------------------
-    # Save predictions
-    # ------------------------------------------------------------------
-
-    predictions_file = (
-        Path("results/classification")
-        / "test_predictions.npz"
+    predictions_path = (
+        output_dir.parent / "test_predictions.npz"
     )
 
     np.savez_compressed(
-        predictions_file,
-        labels=test_labels,
-        predictions=test_predictions,
-        probabilities=test_probs,
+        predictions_path,
+        y_true=y_true,
+        y_pred=y_pred,
+        y_proba=y_proba,
     )
-
-    # ------------------------------------------------------------------
-    # Save summary
-    # ------------------------------------------------------------------
 
     summary = {
-        "model_name": model_name,
-        "num_classes": num_labels,
-        "class_names": class_names,
-        "train_samples": len(train_dataset),
-        "validation_samples": len(val_dataset),
-        "test_samples": len(test_dataset),
-        "best_checkpoint": str(best_checkpoint),
-        "best_validation_macro_f1": best_val_f1,
-        "test_loss": test_loss,
+        "model": model_cfg["name"],
+        "device": str(device),
+        "num_classes": len(class_names),
+        "classes": class_names,
+        "dataset": {
+            "train_samples": len(train_dataset),
+            "validation_samples": len(val_dataset),
+            "test_samples": len(test_dataset),
+        },
+        "training": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "best_epoch": best_epoch,
+            "best_validation_macro_f1": best_val_f1,
+            "freeze_encoder_layers": freeze_layers,
+        },
         "test_metrics": test_metrics,
         "confidence_analysis": confidence,
-        "training_history": training_history,
     }
 
-    # Convert NumPy values to JSON-safe values.
-    def make_json_safe(value):
-        if isinstance(value, np.ndarray):
-            return value.tolist()
+    summary_path = Path(output_cfg["summary_file"])
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if isinstance(value, np.integer):
-            return int(value)
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
 
-        if isinstance(value, np.floating):
-            return float(value)
-
-        if isinstance(value, dict):
-            return {
-                key: make_json_safe(item)
-                for key, item in value.items()
-            }
-
-        if isinstance(value, list):
-            return [
-                make_json_safe(item)
-                for item in value
-            ]
-
-        return value
-
-    summary = make_json_safe(summary)
-
-    with open(
-        summary_file,
-        "w",
-        encoding="utf-8",
-    ) as handle:
-        json.dump(
-            summary,
-            handle,
-            indent=2,
-        )
-
-    print("\nClassification experiment complete.")
-
+    print("\nFinal test results:")
     print(
-        f"  Best checkpoint: {best_checkpoint}"
+        f"  Accuracy:        "
+        f"{test_metrics['accuracy']:.4f}"
     )
     print(
-        f"  Training log: {log_file}"
+        f"  Macro F1:        "
+        f"{test_metrics['macro_f1']:.4f}"
     )
     print(
-        f"  Summary: {summary_file}"
+        f"  Macro Precision: "
+        f"{test_metrics['macro_precision']:.4f}"
     )
     print(
-        f"  Confusion matrix: "
-        f"{confusion_matrix_file}"
+        f"  Macro Recall:    "
+        f"{test_metrics['macro_recall']:.4f}"
+    )
+
+    print("\nConfidence analysis:")
+    print(
+        f"  Low confidence: "
+        f"{confidence['low_confidence']['count']}"
     )
     print(
-        f"  Predictions: "
-        f"{predictions_file}"
+        f"  Correct high confidence: "
+        f"{confidence['correct_high_confidence']['count']}"
     )
+    print(
+        f"  Incorrect high confidence: "
+        f"{confidence['incorrect_high_confidence']['count']}"
+    )
+
+    return summary
