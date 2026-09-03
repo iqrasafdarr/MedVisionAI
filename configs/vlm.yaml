@@ -1,11 +1,11 @@
-# Config for the BLIP-base structured description module.
+﻿# Config for the BLIP-base structured description module.
 
 seed: 42
 
 model:
   name: "Salesforce/blip-image-captioning-base"
-  mode: "zero_shot"                   # "zero_shot" or "fine_tuned" — start zero_shot
-  device: "cuda"
+  mode: "zero_shot"                   # "zero_shot" or "fine_tuned" â€” start zero_shot
+  device: "cpu"
 
 report_template:
   sections:

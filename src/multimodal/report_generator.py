@@ -1,16 +1,38 @@
-"""Combines: (1) the BLIP caption, (2) the classifier's prediction +
-confidence, and (3) a fixed disclaimer, into the controlled structured
-report template defined in configs/vlm.yaml.
+﻿"""Controlled structured report generation."""
 
-This is the guardrail against VLM hallucination: the template's section
-boundaries and the disclaimer text are NOT model-generated — only the
-"image_description" section content comes from BLIP; classification
-context comes from real classifier output; the disclaimer is fixed text.
+def build_report(
+    caption: str,
+    classifier_prediction: str,
+    classifier_confidence: float,
+    config: dict,
+) -> str:
 
-TODO(Phase 5): implement build_report(caption, classifier_output, config) -> str.
-"""
+    disclaimer = config.get(
+        "disclaimer_text",
+        "Research prototype only. This output is not intended for clinical diagnosis."
+    )
 
+    sections = config.get("report_template", {}).get("sections", [])
 
-def build_report(caption: str, classifier_prediction: str,
-                  classifier_confidence: float, config: dict) -> str:
-    raise NotImplementedError("Implemented in Phase 5.")
+    parts = []
+
+    if "image_description" in sections:
+        parts.append(
+            "## Image Description\n"
+            f"{caption}"
+        )
+
+    if "ai_classification_context" in sections:
+        parts.append(
+            "## AI Classification Context\n"
+            f"Predicted class: {classifier_prediction}\n"
+            f"Model confidence: {classifier_confidence:.4f}"
+        )
+
+    if "safety_disclaimer" in sections:
+        parts.append(
+            "## Safety Disclaimer\n"
+            f"{disclaimer}"
+        )
+
+    return "\n\n".join(parts)

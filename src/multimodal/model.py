@@ -1,11 +1,20 @@
-"""Loads BLIP-base (Salesforce/blip-image-captioning-base) for structured
-image description generation.
+﻿"""BLIP model loading for zero-shot image description."""
 
-TODO(Phase 5): load via transformers.BlipProcessor / BlipForConditionalGeneration.
-Zero-shot captioning first; fine-tuning only if zero-shot output quality
-needs it (per configs/vlm.yaml mode setting).
-"""
+import torch
+from transformers import BlipProcessor, BlipForConditionalGeneration
 
 
 def load_blip_model(model_config: dict):
-    raise NotImplementedError("Implemented in Phase 5.")
+    model_name = model_config["name"]
+    requested_device = model_config.get("device", "cpu")
+
+    device = torch.device(
+        "cuda" if requested_device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
+
+    processor = BlipProcessor.from_pretrained(model_name)
+    model = BlipForConditionalGeneration.from_pretrained(model_name)
+    model.to(device)
+    model.eval()
+
+    return model, processor, device
