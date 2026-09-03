@@ -20,16 +20,35 @@ from src.classification.metrics import (
 
 
 def _freeze_layers(model, num_layers):
-    """Freeze the ViT backbone except for the final encoder layers."""
+    """Freeze ViT embeddings and the first N encoder layers."""
     if num_layers <= 0:
         return
 
+    # Freeze patch embeddings.
     for parameter in model.vit.embeddings.parameters():
         parameter.requires_grad = False
 
-    encoder_layers = model.vit.encoder.layer
+    # Transformers versions can expose the encoder through different
+    # internal module layouts. Locate the encoder layers safely.
+    encoder = getattr(model.vit, "encoder", None)
 
-    for layer in encoder_layers[:num_layers]:
+    if encoder is None:
+        raise AttributeError(
+            "Could not locate ViT encoder. "
+            f"Available ViT modules: {list(model.vit._modules.keys())}"
+        )
+
+    encoder_layers = getattr(encoder, "layer", None)
+
+    if encoder_layers is None:
+        raise AttributeError(
+            "Could not locate ViT encoder layers. "
+            f"Available encoder modules: {list(encoder._modules.keys())}"
+        )
+
+    num_to_freeze = min(num_layers, len(encoder_layers))
+
+    for layer in encoder_layers[:num_to_freeze]:
         for parameter in layer.parameters():
             parameter.requires_grad = False
 
@@ -72,16 +91,19 @@ def _run_epoch(model, loader, criterion, optimizer, device, training):
 
             if training:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    1.0,
+                )
                 optimizer.step()
 
         probabilities = torch.softmax(logits, dim=1)
         predictions = torch.argmax(probabilities, dim=1)
 
-        batch_size = labels.size(0)
+        current_batch_size = labels.size(0)
 
-        total_loss += loss.item() * batch_size
-        total_samples += batch_size
+        total_loss += loss.item() * current_batch_size
+        total_samples += current_batch_size
 
         all_true.extend(labels.detach().cpu().numpy())
         all_pred.extend(predictions.detach().cpu().numpy())
@@ -120,13 +142,27 @@ def _save_confusion_matrix(matrix, class_names, output_path):
 
     for i in range(matrix.shape[0]):
         for j in range(matrix.shape[1]):
-            ax.text(j, i, matrix[i, j], ha="center", va="center")
+            ax.text(
+                j,
+                i,
+                matrix[i, j],
+                ha="center",
+                va="center",
+            )
 
     fig.colorbar(image, ax=ax)
     fig.tight_layout()
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=200)
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    fig.savefig(
+        output_path,
+        dpi=200,
+    )
+
     plt.close(fig)
 
 
@@ -136,23 +172,50 @@ def train(config: dict) -> dict:
     train_cfg = config["train"]
     output_cfg = config["output"]
 
-    output_dir = Path(output_cfg["checkpoint_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(
+        output_cfg["checkpoint_dir"]
+    )
 
-    device_name = train_cfg.get("device", "cpu")
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    if device_name == "cuda" and not torch.cuda.is_available():
-        print("CUDA requested but unavailable. Falling back to CPU.")
+    device_name = train_cfg.get(
+        "device",
+        "cpu",
+    )
+
+    if (
+        device_name == "cuda"
+        and not torch.cuda.is_available()
+    ):
+        print(
+            "CUDA requested but unavailable. "
+            "Falling back to CPU."
+        )
         device_name = "cpu"
 
     device = torch.device(device_name)
 
     print(f"\nUsing device: {device}")
 
-    train_dataset, val_dataset, test_dataset, processor = build_datasets(config)
+    (
+        train_dataset,
+        val_dataset,
+        test_dataset,
+        processor,
+    ) = build_datasets(config)
 
-    num_workers = train_cfg.get("num_workers", 0)
-    batch_size = train_cfg.get("batch_size", 2)
+    num_workers = train_cfg.get(
+        "num_workers",
+        0,
+    )
+
+    batch_size = train_cfg.get(
+        "batch_size",
+        2,
+    )
 
     train_loader = _make_loader(
         train_dataset,
@@ -185,22 +248,35 @@ def train(config: dict) -> dict:
 
     model.to(device)
 
-    freeze_layers = model_cfg.get("freeze_encoder_layers", 0)
+    freeze_layers = model_cfg.get(
+        "freeze_encoder_layers",
+        0,
+    )
 
     if freeze_layers > 0:
-        _freeze_layers(model, freeze_layers)
+        _freeze_layers(
+            model,
+            freeze_layers,
+        )
+
         print(
-            f"Frozen first {freeze_layers} ViT encoder layers "
-            "for CPU-efficient fine-tuning."
+            f"Frozen first {freeze_layers} ViT encoder "
+            "layers for CPU-efficient fine-tuning."
         )
 
     class_names = data_cfg["classes"]
 
     train_labels = np.asarray(
-        [label for _, label in train_dataset.samples]
+        [
+            label
+            for _, label in train_dataset.samples
+        ]
     )
 
-    class_weighting = train_cfg.get("class_weighting", "none")
+    class_weighting = train_cfg.get(
+        "class_weighting",
+        "none",
+    )
 
     if class_weighting == "auto":
         counts = np.bincount(
@@ -209,7 +285,8 @@ def train(config: dict) -> dict:
         ).astype(np.float32)
 
         weights = counts.sum() / (
-            len(class_names) * np.maximum(counts, 1)
+            len(class_names)
+            * np.maximum(counts, 1)
         )
 
         class_weights = torch.tensor(
@@ -219,16 +296,35 @@ def train(config: dict) -> dict:
         )
 
         print("\nClass weights:")
-        for name, weight in zip(class_names, weights):
-            print(f"  {name}: {weight:.4f}")
 
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        for name, weight in zip(
+            class_names,
+            weights,
+        ):
+            print(
+                f"  {name}: {weight:.4f}"
+            )
+
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights
+        )
 
     else:
         criterion = nn.CrossEntropyLoss()
 
-    learning_rate = float(train_cfg.get("learning_rate", 2e-5))
-    weight_decay = float(train_cfg.get("weight_decay", 0.01))
+    learning_rate = float(
+        train_cfg.get(
+            "learning_rate",
+            2e-5,
+        )
+    )
+
+    weight_decay = float(
+        train_cfg.get(
+            "weight_decay",
+            0.01,
+        )
+    )
 
     trainable_parameters = [
         parameter
@@ -242,19 +338,35 @@ def train(config: dict) -> dict:
         weight_decay=weight_decay,
     )
 
-    epochs = int(train_cfg.get("epochs", 3))
+    epochs = int(
+        train_cfg.get(
+            "epochs",
+            3,
+        )
+    )
 
-    log_file = Path(output_cfg["log_file"])
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file = Path(
+        output_cfg["log_file"]
+    )
+
+    log_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     best_val_f1 = -1.0
     best_epoch = -1
 
     history = []
 
-    print(f"\nStarting training for {epochs} epochs...\n")
+    print(
+        f"\nStarting training for {epochs} epochs...\n"
+    )
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(
+        1,
+        epochs + 1,
+    ):
         train_metrics, _, _, _ = _run_epoch(
             model,
             train_loader,
@@ -295,11 +407,20 @@ def train(config: dict) -> dict:
             f"val_f1={row['val_macro_f1']:.4f}"
         )
 
-        if val_metrics["macro_f1"] > best_val_f1:
-            best_val_f1 = val_metrics["macro_f1"]
+        if (
+            val_metrics["macro_f1"]
+            > best_val_f1
+        ):
+            best_val_f1 = (
+                val_metrics["macro_f1"]
+            )
+
             best_epoch = epoch
 
-            checkpoint_path = output_dir / "best_model.pt"
+            checkpoint_path = (
+                output_dir
+                / "best_model.pt"
+            )
 
             torch.save(
                 {
@@ -313,35 +434,54 @@ def train(config: dict) -> dict:
                 checkpoint_path,
             )
 
-            print(f"  Saved best checkpoint: {checkpoint_path}")
+            print(
+                f"  Saved best checkpoint: "
+                f"{checkpoint_path}"
+            )
 
-    with open(log_file, "w", newline="") as f:
+    with open(
+        log_file,
+        "w",
+        newline="",
+    ) as f:
         writer = csv.DictWriter(
             f,
             fieldnames=history[0].keys(),
         )
+
         writer.writeheader()
         writer.writerows(history)
 
-    print("\nLoading best checkpoint for final test evaluation...")
+    print(
+        "\nLoading best checkpoint "
+        "for final test evaluation..."
+    )
 
-    checkpoint_path = output_dir / "best_model.pt"
+    checkpoint_path = (
+        output_dir
+        / "best_model.pt"
+    )
 
     checkpoint = torch.load(
         checkpoint_path,
         map_location=device,
     )
 
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict(
+        checkpoint["model_state_dict"]
+    )
+
     model.to(device)
 
-    test_metrics, y_true, y_pred, y_proba = _run_epoch(
-        model,
-        test_loader,
-        criterion,
-        optimizer=None,
-        device=device,
-        training=False,
+    test_metrics, y_true, y_pred, y_proba = (
+        _run_epoch(
+            model,
+            test_loader,
+            criterion,
+            optimizer=None,
+            device=device,
+            training=False,
+        )
     )
 
     confidence = get_confidence_buckets(
@@ -361,7 +501,10 @@ def train(config: dict) -> dict:
         confusion_matrix_path,
     )
 
-    predictions_path = output_dir.parent / "test_predictions.npz"
+    predictions_path = (
+        output_dir.parent
+        / "test_predictions.npz"
+    )
 
     np.savez_compressed(
         predictions_path,
@@ -393,27 +536,58 @@ def train(config: dict) -> dict:
         "confidence_analysis": confidence,
     }
 
-    summary_path = Path(output_cfg["summary_file"])
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path = Path(
+        output_cfg["summary_file"]
+    )
 
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
+    summary_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with open(
+        summary_path,
+        "w",
+    ) as f:
+        json.dump(
+            summary,
+            f,
+            indent=2,
+        )
 
     print("\nFinal test results:")
-    print(f"  Accuracy:      {test_metrics['accuracy']:.4f}")
-    print(f"  Macro F1:      {test_metrics['macro_f1']:.4f}")
-    print(f"  Macro Precision: {test_metrics['macro_precision']:.4f}")
-    print(f"  Macro Recall:    {test_metrics['macro_recall']:.4f}")
+    print(
+        f"  Accuracy:        "
+        f"{test_metrics['accuracy']:.4f}"
+    )
+
+    print(
+        f"  Macro F1:        "
+        f"{test_metrics['macro_f1']:.4f}"
+    )
+
+    print(
+        f"  Macro Precision: "
+        f"{test_metrics['macro_precision']:.4f}"
+    )
+
+    print(
+        f"  Macro Recall:    "
+        f"{test_metrics['macro_recall']:.4f}"
+    )
 
     print("\nConfidence analysis:")
+
     print(
         f"  Low confidence: "
         f"{confidence['low_confidence']['count']}"
     )
+
     print(
         f"  Correct high confidence: "
         f"{confidence['correct_high_confidence']['count']}"
     )
+
     print(
         f"  Incorrect high confidence: "
         f"{confidence['incorrect_high_confidence']['count']}"
